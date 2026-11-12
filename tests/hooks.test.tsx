@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, TurnStepInput } from 'claude-code'
 
-type World = { model: string; contextTokens: number; classify?: string; classifyThrows?: boolean }
+type World = { model: string; contextTokens: number; classify?: string; classifyThrows?: boolean; answer?: 'switch' | 'stay' | 'dismiss'; asked?: string[] }
 
 // The engine beneath the plugin: each hook answers a call the mod makes on `$`.
 function world(on: On, w: World, steps: TurnStepInput[], statuses: string[]) {
@@ -23,6 +23,14 @@ function world(on: On, w: World, steps: TurnStepInput[], statuses: string[]) {
     return { value: undefined }
   })
   on('ui.toast', () => ({ value: undefined }))
+  // $.ui.ask is a call of the AskUserQuestion tool: answer it as the person would.
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    const q = (e as unknown as { questions: { question: string; options: { label: string }[] }[] }).questions[0]!
+    ;(w.asked ??= []).push(q.question)
+    if (w.answer === 'dismiss') return { deny: 'dismissed' }
+    const label = q.options[w.answer === 'stay' ? 1 : 0]!.label
+    return { result: { questions: [q], answers: { [q.question]: label } } }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_, e) => ({ text: e.text, context: e.context }))
   on('turn.complete', () => ({ text: '' }))
@@ -129,6 +137,45 @@ test('the cache guard also holds the very first message of a long conversation',
 
   // Stayed on the selected Opus (no model rewrite).
   expect(steps[0]?.model).toBe('claude-opus-5-5')
+})
+
+test('the router asks before switching and stays put when told to', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'stay' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('rename getUser to fetchUser'))
+  await step($, 't1', 0)
+
+  expect(w.asked?.[0]).toMatch(/suggests Haiku.*Switch\?$/)
+  // Declined: no model or effort rewrite.
+  expect(steps[0]?.model).toBe('claude-opus-5-5')
+  expect(steps[0]?.effort).toBe('high')
+})
+
+test('a dismissed question keeps the current model', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  world(on, { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'dismiss' }, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('rename getUser to fetchUser'))
+  await step($, 't1', 0)
+
+  expect(steps[0]?.model).toBe('claude-opus-5-5')
+})
+
+test('no question when the person picked the model themselves', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'stay' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('use haiku: rename getUser to fetchUser'))
+  await step($, 't1', 0)
+
+  expect(w.asked ?? []).toEqual([])
+  expect(steps[0]?.model).toBe('haiku')
 })
 
 test('a manual model change pauses the router', async ($, on) => {

@@ -27,7 +27,8 @@ For each message you type, the router:
 1. **Classifies the task** with cheap keyword heuristics: task type, number of files mentioned, length, and list items. It falls back to one small Haiku classification call only when the heuristics are unsure (4 s timeout).
 2. **Picks a tier.** Haiku/low for mechanical edits and quick questions, Sonnet/medium for normal coding, and Opus/high for architecture, security, tricky debugging and multi-file refactors.
 3. **Locks that model for the whole turn.** Every model request in the turn (`turn.step`) uses it, so tool steps never switch models mid-turn.
-4. **Protects the prompt cache.** Each model has its own cache. On a long conversation (above `switchContextTokens`), a downgrade would re-read the whole context uncached, so the router keeps the current model and only lowers effort. Upgrades still go through.
+4. **Asks before switching.** When it suggests a different model, it asks you first (`Switch to …` / `Stay on …`). Saying no, or closing the question, keeps your current model and effort for that message. Your own picks (`use opus`, `/router force`) are never asked about.
+5. **Protects the prompt cache.** Each model has its own cache. On a long conversation (above `switchContextTokens`), a downgrade would re-read the whole context uncached, so the router keeps the current model and only lowers effort. Upgrades still go through.
 5. **Suggests delegation** with a short note only the model reads, and only when it helps:
    - broad codebase search → `model-router:scout` (Haiku, read-only, returns a summary)
    - several independent parts → parallel `model-router:builder` subagents (Sonnet, at most 4)

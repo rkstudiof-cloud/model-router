@@ -19,6 +19,8 @@ export type Decision = {
   source: DecisionSource
   /** Set when the cache guard kept the previous model instead of switching. */
   held?: string
+  /** Set when the person turned down the suggested switch: the turn runs untouched. */
+  declined?: boolean
 }
 
 export type Forced = { tier: ModelTier; effort: Effort }

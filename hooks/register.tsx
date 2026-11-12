@@ -230,6 +230,24 @@ export const register: Register = (on, options) => {
     if (d.source === 'override' || d.source === 'forced') delta.overrides = 1
     d = guarded
 
+    // The router only suggests a model switch; the person confirms it. Their own picks
+    // (/router force, "use opus") are already confirmed.
+    if (d.tier !== baseline && d.source !== 'forced' && d.source !== 'override') {
+      const current = baseline ? LABEL[baseline] : 'your current model'
+      const yes = `Switch to ${LABEL[d.tier]}`
+      const no = `Stay on ${current}`
+      let answer: string | undefined
+      try {
+        answer = await $.ui.ask(`Model router suggests ${LABEL[d.tier]} at ${d.effort} effort for this message (${d.reason}). Switch?`, {
+          header: 'Model',
+          options: [yes, no],
+        })
+      } catch {
+        answer = undefined // dismissed, or nobody to ask: keep the current model
+      }
+      if (answer !== yes) d = { ...d, declined: true, held: `you kept ${current}` }
+    }
+
     await update($, decision, () => d)
     await update($, failStreak, () => out.failStreak)
     if (Object.keys(delta).length) await bumpStats($, delta)
@@ -254,8 +272,9 @@ export const register: Register = (on, options) => {
             const d = await read($, decision)
             const r = await read($, running)
             // A reload mid-turn: keep the model the turn has been running on.
-            const tier = e.index === 0 ? (d?.tier ?? null) : r
-            l = { turnId: e.turnId, tier, effort: e.index === 0 ? (d?.effort ?? null) : null }
+            const use = d && !d.declined ? d : null
+            const tier = e.index === 0 ? (use?.tier ?? null) : r
+            l = { turnId: e.turnId, tier, effort: e.index === 0 ? (use?.effort ?? null) : null }
             const fresh = l
             await update($, lock, () => fresh)
           }
