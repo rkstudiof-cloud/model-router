@@ -1,0 +1,50 @@
+{
+  "name": "model-router",
+  "version": "0.1.0",
+  "description": "Picks the model, effort and delegation for each message to keep costs down without losing quality",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "maxTier": {
+      "type": "string",
+      "title": "Highest model the router may pick",
+      "description": "The router never picks a model above this one on its own. Your own overrides can still go higher.",
+      "options": [
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
+      "default": "opus"
+    },
+    "switchContextTokens": {
+      "type": "number",
+      "title": "Context size that blocks switching to a cheaper model",
+      "description": "Above this many context tokens, the router keeps the current model instead of downgrading, because the new model would re-read the whole context without the prompt cache.",
+      "default": 40000
+    },
+    "useClassifier": {
+      "type": "boolean",
+      "title": "Use a Haiku classifier when heuristics are unsure",
+      "default": true,
+      "description": "When the keyword heuristics cannot tell how hard a message is, ask Haiku to classify it (one small, cheap call)."
+    },
+    "respectManualSwitch": {
+      "type": "boolean",
+      "title": "Pause routing when you change the model yourself",
+      "default": true,
+      "description": "If you change the session model yourself, the router stops overriding it until you run /router auto."
+    },
+    "showBand": {
+      "type": "boolean",
+      "title": "Show the router's decision above the prompt",
+      "default": true,
+      "description": "Shows a one-line band above the prompt with the model, effort and delegation picked for your last message."
+    },
+    "escalateAfter": {
+      "type": "number",
+      "title": "Failed attempts before moving up a model",
+      "default": 2,
+      "description": "How many times you report that a fix failed before the router moves up one model and raises effort."
+    }
+  },
+  "license": "MIT"
+}
