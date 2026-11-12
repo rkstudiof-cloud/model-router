@@ -7,12 +7,7 @@
     "maxTier": {
       "type": "string",
       "title": "Highest model the router may pick",
-      "description": "The router never picks a model above this one on its own. Your own overrides can still go higher.",
-      "options": [
-        "haiku",
-        "sonnet",
-        "opus"
-      ],
+      "description": "The router never picks a model above this one on its own. Your own overrides can still go higher. One of: haiku, sonnet, opus.",
       "default": "opus"
     },
     "switchContextTokens": {
