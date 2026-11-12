@@ -118,6 +118,19 @@ test('the cache guard holds a downgrade on a long conversation', async ($, on) =
   expect(steps[1]?.effort).toBe('low')
 })
 
+test('the cache guard also holds the very first message of a long conversation', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  // A reload or resume: the chat is already long and no reply has been seen yet.
+  world(on, { model: 'claude-opus-5-5', contextTokens: 150_000 }, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('fix the typo in the README'))
+  await step($, 't1', 0, 'claude-opus-5-5')
+
+  // Stayed on the selected Opus (no model rewrite).
+  expect(steps[0]?.model).toBe('claude-opus-5-5')
+})
+
 test('a manual model change pauses the router', async ($, on) => {
   const steps: TurnStepInput[] = []
   const w = { model: 'claude-opus-5-5', contextTokens: 2000 }

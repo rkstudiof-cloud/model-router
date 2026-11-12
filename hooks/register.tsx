@@ -220,7 +220,11 @@ export const register: Register = (on, options) => {
     }
 
     const usage = await $.session.usage()
-    const guarded = guardSwitch(d, await read($, running), usage.context.tokens ?? 0, cfg.switchContextTokens)
+    // Before any reply is seen (new session, reload) nothing is "running" yet: treat the model the person
+    // selected as the one holding the cache, so a first message cannot drop a long chat to a cheaper model.
+    const selected = tierOf(now)
+    const baseline = (await read($, running)) ?? (selected === 'other' ? null : selected)
+    const guarded = guardSwitch(d, baseline, usage.context.tokens ?? 0, cfg.switchContextTokens)
     if (guarded.held) delta.heldSwitches = 1
     if (d.source === 'escalation') delta.escalations = 1
     if (d.source === 'override' || d.source === 'forced') delta.overrides = 1
