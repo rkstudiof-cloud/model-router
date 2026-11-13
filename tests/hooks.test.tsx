@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, TurnStepInput } from 'claude-code'
 
-type World = { model: string; contextTokens: number; classify?: string; classifyThrows?: boolean; answer?: 'switch' | 'stay' | 'dismiss'; asked?: string[] }
+type World = { model: string; contextTokens: number; classify?: string; classifyThrows?: boolean; answer?: 'switch' | 'stay' | 'dismiss'; asked?: string[]; judge?: string; judgeThrows?: boolean; judged?: string[] }
 
 // The engine beneath the plugin: each hook answers a call the mod makes on `$`.
 function world(on: On, w: World, steps: TurnStepInput[], statuses: string[]) {
@@ -23,6 +23,11 @@ function world(on: On, w: World, steps: TurnStepInput[], statuses: string[]) {
     return { value: undefined }
   })
   on('ui.toast', () => ({ value: undefined }))
+  on('model.complete', (_, e) => {
+    ;(w.judged ??= []).push(String((e as { prompt?: unknown }).prompt))
+    if (w.judgeThrows) throw new Error('api down')
+    return { value: { isAnswered: true, text: w.judge ?? '', usage: { input_tokens: 1, output_tokens: 1 } } }
+  })
   // $.ui.ask is a call of the AskUserQuestion tool: answer it as the person would.
   on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
     const q = (e as unknown as { questions: { question: string; options: { label: string }[] }[] }).questions[0]!
@@ -178,39 +183,82 @@ test('no question when the person picked the model themselves', async ($, on) =>
   expect(steps[0]?.model).toBe('haiku')
 })
 
-test('quality signals record what your words say about the model that did the work', async ($, on) => {
+async function finish($: Engine, turnId: string, answer: string, isAborted = false) {
+  await $.turn.complete({ turnId, answer, isAborted, durationMs: 10, reason: isAborted ? 'aborted' : 'answer' } as never)
+}
+
+const quality = ($: Engine) =>
+  $.command.run({ command: 'router', args: 'quality', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as never)
+
+test('Haiku judges your next message against the reply it answers', async ($, on) => {
   const steps: TurnStepInput[] = []
   const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'switch' }
   world(on, w, steps, [])
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  const run = (args: string) =>
-    $.command.run({ command: 'router', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as never)
 
-  await $.prompt.submit(submit('rename getUser to fetchUser')) // suggested Haiku, accepted
+  await $.prompt.submit(submit('rename getUser to fetchUser')) // switched to Haiku
   await step($, 't1', 0)
-  await $.prompt.submit(submit("that's wrong, it still fails")) // Haiku did that work: a fail
-  await step($, 't2', 0)
-  await $.prompt.submit(submit('ok')) // whoever did t2 moved on from: an ok
+  await finish($, 't1', 'Renamed getUser to fetchUser in api.ts.')
 
-  const q = await run('quality')
-  expect(q.text).toMatch(/Haiku\s+1\s+0%\s+100%/)
-  expect(q.text).toMatch(/to Haiku\s+asked 1, accepted 100%/)
+  w.judge = 'correction'
+  await $.prompt.submit(submit('you missed the call sites in the tests'))
+  await step($, 't2', 0)
+  await finish($, 't2', 'Updated the tests too.')
+
+  // The judge saw both the reply and your words.
+  expect(w.judged?.[0]).toMatch(/Renamed getUser to fetchUser/)
+  expect(w.judged?.[0]).toMatch(/you missed the call sites/)
+  const q = await quality($)
+  expect(q.text).toMatch(/Haiku\s+1\s+0%\s+100% \(too few\)/)
+  expect(q.text).toMatch(/router changed your model\s+100% \(too few\) of 1/)
+  expect(q.text).toMatch(/to Haiku\s+asked 1, you accepted 100%/)
 })
 
-test('a declined switch is recorded as a signal; a dismissed one is not', async ($, on) => {
+test('without a judge, the keyword rules are the fallback', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, judgeThrows: true }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('design the architecture for a multi-tenant billing system'))
+  await step($, 't1', 0)
+  await finish($, 't1', 'Here is the design.')
+  await $.prompt.submit(submit('it still fails on empty carts'))
+  await step($, 't2', 0)
+  await finish($, 't2', 'Fixed.')
+
+  expect((await quality($)).text).toMatch(/Opus\s+1\s+0%\s+100% \(too few\)/)
+})
+
+test('a turn you stop is recorded; a new request carries no verdict', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, judge: 'none' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('design the architecture for a multi-tenant billing system'))
+  await step($, 't1', 0)
+  await finish($, 't1', 'Halfway thr', true)
+  await $.prompt.submit(submit('add a dark mode toggle to settings'))
+  await step($, 't2', 0)
+  await finish($, 't2', 'Added.')
+
+  const q = (await quality($)).text
+  expect(q).toMatch(/Opus\s+0\s+-\s+-\s+\(too few\)\s+-\s+1/)
+  expect(q).toMatch(/0 of 1 replies carried a verdict/)
+})
+
+test('a declined switch is recorded; a dismissed one is not', async ($, on) => {
   const steps: TurnStepInput[] = []
   const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'stay' }
   world(on, w, steps, [])
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  const run = (args: string) =>
-    $.command.run({ command: 'router', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as never)
 
   await $.prompt.submit(submit('rename getUser to fetchUser'))
   w.answer = 'dismiss'
   await $.prompt.submit(submit('fix the typo in the README'))
 
-  const q = await run('quality')
-  expect(q.text).toMatch(/to Haiku\s+asked 1, accepted 0%/)
+  expect((await quality($)).text).toMatch(/to Haiku\s+asked 1, you accepted 0%/)
 })
 
 test('a manual model change pauses the router', async ($, on) => {

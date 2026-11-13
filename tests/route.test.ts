@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { Decision } from '../types'
-import { decide, detectOverride, formatQuality, guardSwitch, heuristic, isFollowUp, judge } from '../hooks/route'
+import { decide, detectOverride, formatQuality, guardSwitch, heuristic, isFollowUp, parseReaction, reactionPrompt, ruleReaction, wilson } from '../hooks/route'
 
 const base = { last: null, forced: null, failStreak: 0, maxTier: 'opus' as const, escalateAfter: 2 }
 
@@ -128,17 +128,25 @@ describe('cache guard', () => {
 })
 
 describe('quality signals', () => {
-  test('a failure report is a fail', () => {
-    expect(judge('still broken after your change')?.signal).toBe('fail')
+  test('the judge reply is read leniently', () => {
+    expect(parseReaction('Correction.')).toBe('correction')
+    expect(parseReaction(' accepted\n')).toBe('accepted')
+    expect(parseReaction('I am not sure')).toBeUndefined()
   })
-  test('asking for a model is an override that names it', () => {
-    expect(judge('use opus for this')).toEqual({ signal: 'override', asked: 'opus' })
+  test('the judge prompt carries the end of the reply and your message', () => {
+    const p = reactionPrompt('x'.repeat(3000) + 'END OF REPLY', 'that is wrong')
+    expect(p).toMatch(/END OF REPLY/)
+    expect(p).toMatch(/that is wrong/)
+    expect(p.length).toBeLessThan(1700)
   })
-  test('moving on is an ok', () => {
-    expect(judge('thanks')?.signal).toBe('ok')
+  test('the rule fallback reads only the obvious cases', () => {
+    expect(ruleReaction('still broken')).toBe('correction')
+    expect(ruleReaction('thanks')).toBe('accepted')
+    expect(ruleReaction('I am not satisfied with it, you can do better')).toBe('none')
   })
-  test('an ordinary new request says nothing', () => {
-    expect(judge('add a login form')).toBeNull()
+  test('wilson ranges narrow as evidence grows', () => {
+    expect(wilson(1, 10)).toEqual([2, 40])
+    expect(wilson(10, 100)).toEqual([6, 17])
   })
   test('an empty history says so', () => {
     expect(formatQuality([])).toMatch(/no quality signals yet/)

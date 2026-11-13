@@ -66,41 +66,95 @@ export const isFailureReport = (text: string): boolean => FAILURE.test(text)
 
 // ---------------------------------------------------------------- quality signals
 
-/**
- * What a new message says about the model that answered the previous one, or null when it
- * says nothing. Read from the person's own words only; never guessed from the answer.
- */
-export function judge(text: string): { signal: 'fail' | 'override' | 'ok'; asked?: ModelTier } | null {
-  if (isFailureReport(text)) return { signal: 'fail' }
-  const o = detectOverride(text)
-  if (o?.tier) return { signal: 'override', asked: o.tier }
-  if (isFollowUp(text)) return { signal: 'ok' }
-  return null
+export const REACTIONS = ['accepted', 'correction', 'doubt', 'none'] as const
+export type Reaction = (typeof REACTIONS)[number]
+
+// Checked against 50 real replies from this user's history: Haiku with this prompt agreed with a
+// careful human reading on 40; the keyword rules below found none of the 10 corrections or doubts.
+export const REACTION_SYSTEM = [
+  "You label how a person reacted to an AI coding assistant's previous reply. You see the END of that reply and the person's next message. Answer with one label only:",
+  '- accepted: approves the previous work or builds on it (yes, proceed, merge, commit, a next step that relies on it).',
+  '- correction: says the previous work was wrong, incomplete, failed or too slow, or that the assistant should have done something itself instead of handing it back.',
+  '- doubt: questions whether the previous work is correct, safe or complete, or says the reply was unclear, without saying it is wrong.',
+  '- none: a new unrelated request, a status question, or new information; says nothing about the quality of the previous work.',
+].join('\n')
+
+export function reactionPrompt(answerTail: string, text: string): string {
+  return `PREV (end of the assistant's reply):\n…${answerTail.slice(-1500)}\n\nUSER (the person's next message):\n${text.slice(0, 2000)}\n\nLabel:`
 }
 
+export function parseReaction(reply: string | undefined): Reaction | undefined {
+  const m = reply?.toLowerCase().match(/\b(accepted|correction|doubt|none)\b/)
+  return m ? (m[1] as Reaction) : undefined
+}
+
+/** The fallback when no model can judge: the person's words read by rule. It catches little. */
+export function ruleReaction(text: string): Reaction {
+  if (isFailureReport(text)) return 'correction'
+  if (isFollowUp(text)) return 'accepted'
+  return 'none'
+}
+
+/** Wilson 95% interval for k of n, in whole percents. */
+export function wilson(k: number, n: number): [number, number] {
+  if (n === 0) return [0, 100]
+  const z = 1.96
+  const p = k / n
+  const d = 1 + (z * z) / n
+  const c = p + (z * z) / (2 * n)
+  const r = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))
+  return [Math.max(0, Math.round((100 * (c - r)) / d)), Math.min(100, Math.round((100 * (c + r)) / d))]
+}
+
+/** Below this many judged replies a rate is shown but called too few to trust. */
+export const MIN_JUDGED = 20
+
 const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '-')
+const VERDICTS: readonly Signal[] = ['accepted', 'correction', 'doubt']
+
+function rate(list: readonly Feedback[], s: Signal): string {
+  const k = list.filter(f => f.signal === s).length
+  if (list.length < MIN_JUDGED) return `${pct(k, list.length)} (too few)`
+  const [lo, hi] = wilson(k, list.length)
+  return `${pct(k, list.length)} (${lo}-${hi}%)`
+}
 
 export function formatQuality(list: readonly Feedback[]): string {
   if (list.length === 0) return 'Model router: no quality signals yet. They build up as you work.'
-  const lines = ['Quality signals (from your own words and choices):', '']
-  lines.push('Model   judged  ok    fail  overridden')
+  const replies = list.filter(f => (REACTIONS as readonly string[]).includes(f.signal))
+  const judged = list.filter(f => VERDICTS.includes(f.signal))
+  const lines = ["How each model's work landed with you", '']
+  lines.push('Model   judged  accepted  correction          doubt  stopped by you')
   for (const t of TIERS) {
-    const mine = list.filter(f => f.tier === t && (f.signal === 'ok' || f.signal === 'fail' || f.signal === 'override'))
-    if (!mine.length) continue
+    const mine = judged.filter(f => f.tier === t)
+    const stopped = list.filter(f => f.tier === t && f.signal === 'interrupted').length
+    if (!mine.length && !stopped) continue
     const n = (s: Signal) => mine.filter(f => f.signal === s).length
-    lines.push(`${LABEL[t].padEnd(8)}${String(mine.length).padEnd(8)}${pct(n('ok'), mine.length).padEnd(6)}${pct(n('fail'), mine.length).padEnd(6)}${pct(n('override'), mine.length)}`)
+    lines.push(
+      `${LABEL[t].padEnd(8)}${String(mine.length).padEnd(8)}${pct(n('accepted'), mine.length).padEnd(10)}${rate(mine, 'correction').padEnd(20)}${pct(n('doubt'), mine.length).padEnd(7)}${stopped}`,
+    )
   }
-  const asked = list.filter(f => f.signal === 'accepted' || f.signal === 'declined')
+  const routed = judged.filter(f => f.routed === true)
+  const kept = judged.filter(f => f.routed === false)
+  if (routed.length) {
+    lines.push('', 'Does routing cost quality? Correction rate on judged replies:')
+    lines.push(`  router changed your model  ${rate(routed, 'correction')} of ${routed.length}`)
+    lines.push(`  your own model             ${rate(kept, 'correction')} of ${kept.length}`)
+  }
+  const asked = list.filter(f => f.signal === 'switch-accepted' || f.signal === 'switch-declined')
   if (asked.length) {
     lines.push('', 'Suggested switches:')
     for (const t of TIERS) {
       const to = asked.filter(f => f.tier === t)
-      if (!to.length) continue
-      const yes = to.filter(f => f.signal === 'accepted').length
-      lines.push(`  to ${LABEL[t].padEnd(7)} asked ${to.length}, accepted ${pct(yes, to.length)}`)
+      if (to.length) lines.push(`  to ${LABEL[t].padEnd(7)} asked ${to.length}, you accepted ${pct(to.filter(f => f.signal === 'switch-accepted').length, to.length)}`)
     }
   }
-  lines.push('', `${list.length} signals in all. "ok" means you moved on without complaint, not that the answer was rated.`)
+  lines.push(
+    '',
+    `${judged.length} of ${replies.length} replies carried a verdict; the rest were new requests or status questions.`,
+    'Read by Haiku from your next message (it matched a careful human reading on 40 of 50 real replies).',
+    'Ranges are 95% intervals. Each model gets different kinds of tasks, so compare models with care.',
+  )
   return lines.join('\n')
 }
 

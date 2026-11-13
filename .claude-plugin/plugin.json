@@ -1,6 +1,6 @@
 {
   "name": "model-router",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Picks the model, effort and delegation for each message to keep costs down without losing quality",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -21,6 +21,12 @@
       "title": "Use a Haiku classifier when heuristics are unsure",
       "default": true,
       "description": "When the keyword heuristics cannot tell how hard a message is, ask Haiku to classify it (one small, cheap call)."
+    },
+    "judgeReactions": {
+      "type": "boolean",
+      "title": "Judge how each reply landed",
+      "default": true,
+      "description": "After each turn, Haiku reads your next message against the reply it answers and records accepted, correction, doubt or none (one small call per turn). Off: simple keyword rules only, which catch far less. /router quality shows the results."
     },
     "respectManualSwitch": {
       "type": "boolean",

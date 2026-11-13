@@ -44,20 +44,45 @@ export type RouterStats = {
 }
 
 /**
- * A quality signal: what the person's own words or choices said about a model's work.
- * fail: they reported it broken or wrong. override: they asked for a different model.
- * ok: they moved on without complaint. accepted/declined: their answer to a suggested switch.
+ * A quality signal about one turn of work, or about a suggested switch.
+ * accepted / correction / doubt / none: your next message, read in the light of the reply it
+ * answers (none: a new request or status question, no verdict). interrupted: you stopped the
+ * turn. switch-accepted / switch-declined: your answer to a suggested model switch.
  */
-export type Signal = 'fail' | 'override' | 'ok' | 'accepted' | 'declined'
+export type Signal =
+  | 'accepted'
+  | 'correction'
+  | 'doubt'
+  | 'none'
+  | 'interrupted'
+  | 'switch-accepted'
+  | 'switch-declined'
 
 export type Feedback = {
   at: number
   signal: Signal
-  /** The model the signal is about: the one that did the judged work, or the suggested one. */
+  /** The model the signal is about: the one that did the judged turn, or the suggested one. */
   tier: ModelTier
-  /** For accepted/declined: the model the person was on. For override: the model asked for. */
+  /** switch-*: the model you were on. */
   other?: ModelTier
+  /** How the router chose for the judged turn, when it chose. */
+  effort?: Effort
+  source?: DecisionSource
+  /** True when the judged turn ran on a different model than the one you selected. */
+  routed?: boolean
+  /** Who read the signal: Haiku, the fallback rules, or your own action. */
+  by: 'haiku' | 'rules' | 'you'
   snippet: string
+}
+
+/** The last finished main-loop turn, kept so the reply to it can be judged. */
+export type LastTurn = {
+  turnId: string
+  tier: ModelTier
+  effort?: Effort
+  source?: DecisionSource
+  routed: boolean
+  answerTail: string
 }
 
 export type LogEntry = {
@@ -81,6 +106,8 @@ declare module 'claude-code' {
       sessionModel: string | null
       running: ModelTier | null
       lock: TurnLock | null
+      lastTurn: LastTurn | null
+      reaction: string | null
     }
   }
 }

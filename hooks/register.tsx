@@ -6,6 +6,7 @@ import type {
   Effort,
   Feedback,
   Forced,
+  LastTurn,
   LogEntry,
   RouterMode,
   RouterStats,
@@ -26,7 +27,10 @@ import {
   isEffort,
   isTier,
   formatQuality,
-  judge,
+  parseReaction,
+  REACTION_SYSTEM,
+  reactionPrompt,
+  ruleReaction,
   money,
   tierOf,
 } from './route'
@@ -42,11 +46,13 @@ const failStreak = atom({ plugin: 'model-router', key: 'failStreak' } as const, 
 const sessionModel = atom({ plugin: 'model-router', key: 'sessionModel' } as const, null as string | null)
 const running = atom({ plugin: 'model-router', key: 'running' } as const, null as ModelTier | null)
 const lock = atom({ plugin: 'model-router', key: 'lock' } as const, null as TurnLock | null)
+const lastTurn = atom({ plugin: 'model-router', key: 'lastTurn' } as const, null as LastTurn | null)
+const reaction = atom({ plugin: 'model-router', key: 'reaction' } as const, null as string | null)
 
 const LIFETIME = 'lifetime-stats-1'
 const LOG = 'decision-log-1'
 const LOG_MAX = 300
-const FEEDBACK = 'quality-signals-1'
+const FEEDBACK = 'quality-signals-2'
 const FEEDBACK_MAX = 2000
 
 async function addFeedback($: EngineInterface, f: Omit<Feedback, 'at'>): Promise<void> {
@@ -66,6 +72,7 @@ type Config = {
   respectManualSwitch: boolean
   showBand: boolean
   escalateAfter: number
+  judgeReactions: boolean
   classifierTimeoutMs: number
 }
 
@@ -81,6 +88,7 @@ function config(options: Readonly<Record<string, unknown>>): Config {
     respectManualSwitch: b('respectManualSwitch', true),
     showBand: b('showBand', true),
     escalateAfter: Math.max(1, Math.round(n('escalateAfter', 2))),
+    judgeReactions: b('judgeReactions', true),
     classifierTimeoutMs: 4000,
   }
 }
@@ -100,6 +108,30 @@ async function classify($: EngineInterface, text: string, ms: number): Promise<s
     stop.abort()
   }
 }
+
+type Reaction = ReturnType<typeof ruleReaction>
+
+/** Haiku reads your next message in the light of the reply it answers. Undefined on any failure. */
+async function judgeReaction($: EngineInterface, answerTail: string, text: string, ms: number): Promise<Reaction | undefined> {
+  const stop = new AbortController()
+  const timeout = $.clock.sleep(ms, { signal: stop.signal }).then(
+    () => undefined,
+    () => undefined,
+  )
+  try {
+    const r = await Promise.race([
+      $.model
+        .complete({ model: 'haiku', system: REACTION_SYSTEM, prompt: reactionPrompt(answerTail, text), maxTokens: 8 }, { signal: stop.signal })
+        .catch(() => undefined),
+      timeout,
+    ])
+    return r && r.isAnswered ? parseReaction(r.text) : undefined
+  } finally {
+    stop.abort()
+  }
+}
+
+const snip = (text: string) => text.replace(/\s+/g, ' ').slice(0, 60)
 
 async function addLifetime($: EngineInterface, delta: Partial<RouterStats>): Promise<void> {
   const prev = (await $.store.get(LIFETIME)) as RouterStats | undefined
@@ -123,6 +155,46 @@ async function logDecision($: EngineInterface, text: string, d: Decision): Promi
     reason: d.held ?? d.reason,
   }
   await $.store.set(LOG, [...(Array.isArray(prev) ? prev : []), entry].slice(-LOG_MAX))
+}
+
+// After a main-loop turn: judge the message that started it against the previous reply, note
+// whether you stopped it, and remember this turn for judging your next message.
+async function recordTurn(
+  $: EngineInterface,
+  e: { turnId: string; answer: string; isAborted: boolean },
+  judge: { on: boolean; timeoutMs: number },
+): Promise<void> {
+  const prev = await read($, lastTurn)
+  const text = await read($, reaction)
+  await update($, reaction, () => null)
+  if (prev && text !== null) {
+    const judged = judge.on ? await judgeReaction($, prev.answerTail, text, judge.timeoutMs) : undefined
+    await addFeedback($, {
+      signal: judged ?? ruleReaction(text),
+      tier: prev.tier,
+      routed: prev.routed,
+      ...(prev.effort ? { effort: prev.effort } : {}),
+      ...(prev.source ? { source: prev.source } : {}),
+      by: judged ? 'haiku' : 'rules',
+      snippet: snip(text),
+    })
+  }
+  const ran = await read($, running)
+  if (!ran) return
+  const d = await read($, decision)
+  const selected = tierOf(await $.session.model())
+  const chose = d !== null && !d.declined && d.tier === ran
+  const turn: LastTurn = {
+    turnId: e.turnId,
+    tier: ran,
+    routed: selected !== 'other' && selected !== ran,
+    answerTail: (e.answer ?? '').slice(-1500),
+    ...(chose ? { effort: d.effort, source: d.source } : {}),
+  }
+  if (e.isAborted) {
+    await addFeedback($, { signal: 'interrupted', tier: ran, routed: turn.routed, ...(turn.source ? { source: turn.source } : {}), by: 'you', snippet: '' })
+  }
+  await update($, lastTurn, () => turn)
 }
 
 export const describe = (d: Decision): string =>
@@ -206,18 +278,9 @@ export const register: Register = (on, options) => {
       }
     }
 
-    // What this message says about the model that did the last piece of work. Recorded even
-    // while routing is off or paused, so the signal covers every model you use.
-    const verdict = judge(e.text)
-    const judged = await read($, running)
-    if (verdict && judged) {
-      await addFeedback($, {
-        signal: verdict.signal,
-        tier: judged,
-        ...(verdict.asked ? { other: verdict.asked } : {}),
-        snippet: e.text.replace(/\s+/g, ' ').slice(0, 60),
-      })
-    }
+    // Your message is the reaction to the last turn's reply. It is judged once this turn ends,
+    // so the judging never delays the work. Kept even while routing is off or paused.
+    if ((await read($, lastTurn)) !== null) await update($, reaction, () => e.text)
 
     const m = await read($, mode)
     const f = await read($, forced)
@@ -278,10 +341,11 @@ export const register: Register = (on, options) => {
       // A dismissed question says nothing; only a real answer is a signal.
       if (answer !== undefined) {
         await addFeedback($, {
-          signal: answer === yes ? 'accepted' : 'declined',
+          signal: answer === yes ? 'switch-accepted' : 'switch-declined',
           tier: d.tier,
           ...(baseline ? { other: baseline } : {}),
-          snippet: e.text.replace(/\s+/g, ' ').slice(0, 60),
+          by: 'you',
+          snippet: snip(e.text),
         })
       }
     }
@@ -355,14 +419,19 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      try {
-        await bumpStats($, { turns: 1 })
-      } catch {
-        // ignore
-      }
+    if (e.agentId !== undefined) return next(e)
+    try {
+      await bumpStats($, { turns: 1 })
+    } catch {
+      // ignore
     }
-    return next(e)
+    const res = await next(e)
+    try {
+      await recordTurn($, e, { on: cfg.judgeReactions, timeoutMs: cfg.classifierTimeoutMs })
+    } catch {
+      // Recording quality never breaks a turn.
+    }
+    return res
   })
 
   on('command.run', { command: 'router' }, async ($, e) => {
