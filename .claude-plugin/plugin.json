@@ -1,6 +1,6 @@
 {
   "name": "model-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Picks the model, effort and delegation for each message to keep costs down without losing quality",
   "types": "./types/index.d.ts",
   "userConfig": {

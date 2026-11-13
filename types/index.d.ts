@@ -43,6 +43,23 @@ export type RouterStats = {
   overrides: number
 }
 
+/**
+ * A quality signal: what the person's own words or choices said about a model's work.
+ * fail: they reported it broken or wrong. override: they asked for a different model.
+ * ok: they moved on without complaint. accepted/declined: their answer to a suggested switch.
+ */
+export type Signal = 'fail' | 'override' | 'ok' | 'accepted' | 'declined'
+
+export type Feedback = {
+  at: number
+  signal: Signal
+  /** The model the signal is about: the one that did the judged work, or the suggested one. */
+  tier: ModelTier
+  /** For accepted/declined: the model the person was on. For override: the model asked for. */
+  other?: ModelTier
+  snippet: string
+}
+
 export type LogEntry = {
   at: number
   snippet: string

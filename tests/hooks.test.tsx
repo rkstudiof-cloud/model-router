@@ -178,6 +178,41 @@ test('no question when the person picked the model themselves', async ($, on) =>
   expect(steps[0]?.model).toBe('haiku')
 })
 
+test('quality signals record what your words say about the model that did the work', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'switch' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const run = (args: string) =>
+    $.command.run({ command: 'router', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as never)
+
+  await $.prompt.submit(submit('rename getUser to fetchUser')) // suggested Haiku, accepted
+  await step($, 't1', 0)
+  await $.prompt.submit(submit("that's wrong, it still fails")) // Haiku did that work: a fail
+  await step($, 't2', 0)
+  await $.prompt.submit(submit('ok')) // whoever did t2 moved on from: an ok
+
+  const q = await run('quality')
+  expect(q.text).toMatch(/Haiku\s+1\s+0%\s+100%/)
+  expect(q.text).toMatch(/to Haiku\s+asked 1, accepted 100%/)
+})
+
+test('a declined switch is recorded as a signal; a dismissed one is not', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'stay' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const run = (args: string) =>
+    $.command.run({ command: 'router', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as never)
+
+  await $.prompt.submit(submit('rename getUser to fetchUser'))
+  w.answer = 'dismiss'
+  await $.prompt.submit(submit('fix the typo in the README'))
+
+  const q = await run('quality')
+  expect(q.text).toMatch(/to Haiku\s+asked 1, accepted 0%/)
+})
+
 test('a manual model change pauses the router', async ($, on) => {
   const steps: TurnStepInput[] = []
   const w = { model: 'claude-opus-5-5', contextTokens: 2000 }

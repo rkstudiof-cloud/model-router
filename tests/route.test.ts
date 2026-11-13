@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { Decision } from '../types'
-import { decide, detectOverride, guardSwitch, heuristic, isFollowUp } from '../hooks/route'
+import { decide, detectOverride, formatQuality, guardSwitch, heuristic, isFollowUp, judge } from '../hooks/route'
 
 const base = { last: null, forced: null, failStreak: 0, maxTier: 'opus' as const, escalateAfter: 2 }
 
@@ -124,5 +124,23 @@ describe('cache guard', () => {
 
   test('an explicit override is never held', () => {
     expect(guardSwitch({ ...cheap, source: 'override' }, 'opus', 120_000, 40_000).tier).toBe('haiku')
+  })
+})
+
+describe('quality signals', () => {
+  test('a failure report is a fail', () => {
+    expect(judge('still broken after your change')?.signal).toBe('fail')
+  })
+  test('asking for a model is an override that names it', () => {
+    expect(judge('use opus for this')).toEqual({ signal: 'override', asked: 'opus' })
+  })
+  test('moving on is an ok', () => {
+    expect(judge('thanks')?.signal).toBe('ok')
+  })
+  test('an ordinary new request says nothing', () => {
+    expect(judge('add a login form')).toBeNull()
+  })
+  test('an empty history says so', () => {
+    expect(formatQuality([])).toMatch(/no quality signals yet/)
   })
 })

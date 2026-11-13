@@ -1,5 +1,7 @@
 // Pure routing logic: no `$`, so the tests can drive it directly.
 import type {
+  Feedback,
+  Signal,
   Decision,
   Delegation,
   Effort,
@@ -61,6 +63,46 @@ const FAILURE =
   /\b(?:still (?:fail|broken|not work|wrong|error|crash)|(?:doesn'?t|does not|didn'?t|did not|isn'?t|is not) work|same (?:error|issue|problem|bug)|that'?s (?:wrong|not (?:it|right))|not fixed|wrong again|broke (?:it|again)|didn'?t fix)/i
 
 export const isFailureReport = (text: string): boolean => FAILURE.test(text)
+
+// ---------------------------------------------------------------- quality signals
+
+/**
+ * What a new message says about the model that answered the previous one, or null when it
+ * says nothing. Read from the person's own words only; never guessed from the answer.
+ */
+export function judge(text: string): { signal: 'fail' | 'override' | 'ok'; asked?: ModelTier } | null {
+  if (isFailureReport(text)) return { signal: 'fail' }
+  const o = detectOverride(text)
+  if (o?.tier) return { signal: 'override', asked: o.tier }
+  if (isFollowUp(text)) return { signal: 'ok' }
+  return null
+}
+
+const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : '-')
+
+export function formatQuality(list: readonly Feedback[]): string {
+  if (list.length === 0) return 'Model router: no quality signals yet. They build up as you work.'
+  const lines = ['Quality signals (from your own words and choices):', '']
+  lines.push('Model   judged  ok    fail  overridden')
+  for (const t of TIERS) {
+    const mine = list.filter(f => f.tier === t && (f.signal === 'ok' || f.signal === 'fail' || f.signal === 'override'))
+    if (!mine.length) continue
+    const n = (s: Signal) => mine.filter(f => f.signal === s).length
+    lines.push(`${LABEL[t].padEnd(8)}${String(mine.length).padEnd(8)}${pct(n('ok'), mine.length).padEnd(6)}${pct(n('fail'), mine.length).padEnd(6)}${pct(n('override'), mine.length)}`)
+  }
+  const asked = list.filter(f => f.signal === 'accepted' || f.signal === 'declined')
+  if (asked.length) {
+    lines.push('', 'Suggested switches:')
+    for (const t of TIERS) {
+      const to = asked.filter(f => f.tier === t)
+      if (!to.length) continue
+      const yes = to.filter(f => f.signal === 'accepted').length
+      lines.push(`  to ${LABEL[t].padEnd(7)} asked ${to.length}, accepted ${pct(yes, to.length)}`)
+    }
+  }
+  lines.push('', `${list.length} signals in all. "ok" means you moved on without complaint, not that the answer was rated.`)
+  return lines.join('\n')
+}
 
 // ---------------------------------------------------------------- heuristics
 

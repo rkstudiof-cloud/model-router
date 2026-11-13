@@ -29,6 +29,7 @@ For each message you type, the router:
 3. **Locks that model for the whole turn.** Every model request in the turn (`turn.step`) uses it, so tool steps never switch models mid-turn.
 4. **Asks before switching.** When it suggests a different model, it asks you first (`Switch to …` / `Stay on …`). Saying no, or closing the question, keeps your current model and effort for that message. Your own picks (`use opus`, `/router force`) are never asked about.
 5. **Protects the prompt cache.** Each model has its own cache. On a long conversation (above `switchContextTokens`), a downgrade would re-read the whole context uncached, so the router keeps the current model and only lowers effort. Upgrades still go through.
+6. **Records quality signals.** From your own words and choices only: a failure report (`still broken`) is a fail for the model that did the work, asking for a model (`use opus`) an override, moving on (`ok`, `thanks`) an ok, and your answer to a suggested switch accepted or declined. `/router quality` shows how each model fared. Nothing is sent anywhere; it stays in the plugin's local store.
 5. **Suggests delegation** with a short note only the model reads, and only when it helps:
    - broad codebase search → `model-router:scout` (Haiku, read-only, returns a summary)
    - several independent parts → parallel `model-router:builder` subagents (Sonnet, at most 4)
@@ -49,6 +50,7 @@ For each message you type, the router:
 - A one-line band above the prompt shows the decision and estimated savings, with a Pause/Resume button
 - A status line entry shows the same in short form
 - `/router stats` shows this session's and all-time estimated cost against your session model
+- `/router quality`: how each model fared, from your own words and choices
 - `/router log` shows the last 15 decisions with the reason for each
 
 ## Settings

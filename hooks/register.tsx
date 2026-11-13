@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type {
   Decision,
   Effort,
+  Feedback,
   Forced,
   LogEntry,
   RouterMode,
@@ -24,6 +25,8 @@ import {
   guidance,
   isEffort,
   isTier,
+  formatQuality,
+  judge,
   money,
   tierOf,
 } from './route'
@@ -43,6 +46,18 @@ const lock = atom({ plugin: 'model-router', key: 'lock' } as const, null as Turn
 const LIFETIME = 'lifetime-stats-1'
 const LOG = 'decision-log-1'
 const LOG_MAX = 300
+const FEEDBACK = 'quality-signals-1'
+const FEEDBACK_MAX = 2000
+
+async function addFeedback($: EngineInterface, f: Omit<Feedback, 'at'>): Promise<void> {
+  try {
+    const prev = (await $.store.get(FEEDBACK)) as Feedback[] | undefined
+    const entry: Feedback = { at: await $.clock.now(), ...f }
+    await $.store.set(FEEDBACK, [...(Array.isArray(prev) ? prev : []), entry].slice(-FEEDBACK_MAX))
+  } catch {
+    // Recording quality never breaks a turn.
+  }
+}
 
 type Config = {
   maxTier: ModelTier
@@ -117,6 +132,7 @@ const HELP = [
   '/router            current mode and last decision',
   '/router stats      this session and all-time savings',
   '/router log        the last 15 decisions',
+  '/router quality    how each model fared, from your own words and choices',
   '/router auto       resume automatic routing (clears a force)',
   '/router off        stop routing; the session model handles everything',
   '/router force <haiku|sonnet|opus> [low|medium|high]   pin a model until /router auto',
@@ -128,8 +144,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'router',
-      description: 'Model router: status, stats, log, auto, off, force <model> [effort]',
-      argumentHint: '[stats|log|auto|off|force <model> [effort]]',
+      description: 'Model router: status, stats, log, quality, auto, off, force <model> [effort]',
+      argumentHint: '[stats|log|quality|auto|off|force <model> [effort]]',
     })
     await $.agent.register({
       name: 'scout',
@@ -190,6 +206,19 @@ export const register: Register = (on, options) => {
       }
     }
 
+    // What this message says about the model that did the last piece of work. Recorded even
+    // while routing is off or paused, so the signal covers every model you use.
+    const verdict = judge(e.text)
+    const judged = await read($, running)
+    if (verdict && judged) {
+      await addFeedback($, {
+        signal: verdict.signal,
+        tier: judged,
+        ...(verdict.asked ? { other: verdict.asked } : {}),
+        snippet: e.text.replace(/\s+/g, ' ').slice(0, 60),
+      })
+    }
+
     const m = await read($, mode)
     const f = await read($, forced)
     if (m !== 'auto' && f === null) {
@@ -246,6 +275,15 @@ export const register: Register = (on, options) => {
         answer = undefined // dismissed, or nobody to ask: keep the current model
       }
       if (answer !== yes) d = { ...d, declined: true, held: `you kept ${current}` }
+      // A dismissed question says nothing; only a real answer is a signal.
+      if (answer !== undefined) {
+        await addFeedback($, {
+          signal: answer === yes ? 'accepted' : 'declined',
+          tier: d.tier,
+          ...(baseline ? { other: baseline } : {}),
+          snippet: e.text.replace(/\s+/g, ' ').slice(0, 60),
+        })
+      }
     }
 
     await update($, decision, () => d)
@@ -357,6 +395,9 @@ export const register: Register = (on, options) => {
       return {
         text: `${formatStats(s, 'This session')}${real}\n\n${formatStats(life, 'All sessions')}\n\nCosts are estimates from the price table in hooks/route.ts.`,
       }
+    }
+    if (sub === 'quality') {
+      return { text: formatQuality(((await $.store.get(FEEDBACK)) as Feedback[] | undefined) ?? []) }
     }
     if (sub === 'log') {
       const log = ((await $.store.get(LOG)) as LogEntry[] | undefined) ?? []
