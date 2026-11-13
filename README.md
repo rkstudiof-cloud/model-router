@@ -25,10 +25,10 @@ In the desktop app, where `/plugin` does not run: click + next to the prompt box
 For each message you type, the router:
 
 1. **Classifies the task** with cheap keyword heuristics: task type, number of files mentioned, length, and list items. It falls back to one small Haiku classification call only when the heuristics are unsure (4 s timeout).
-2. **Picks a tier.** Haiku/low for mechanical edits and quick questions, Sonnet/medium for normal coding, and Opus/high for architecture, security, tricky debugging and multi-file refactors.
+2. **Picks a tier.** Haiku/low only for mechanical edits, routine commands and code searches; Sonnet/low for questions and Sonnet/medium for normal coding; Opus/high for architecture, security, tricky debugging, multi-file refactors, design, UX and writing, and summarise-or-decide questions ("what should we do now?", "are you confident?"). Evidence: in a blind head-to-head on 40 real past questions, Haiku matched Opus on only about a quarter and Sonnet on half to three-quarters, and Sonnet trailed most on summarise-or-decide questions; across 4,465 judged past replies, design, UX and writing drew the most corrections even on Opus.
 3. **Locks that model for the whole turn.** Every model request in the turn (`turn.step`) uses it, so tool steps never switch models mid-turn.
 4. **Asks before switching.** When it suggests a different model, it asks you first (`Switch to …` / `Stay on …`). Saying no, or closing the question, keeps your current model and effort for that message. Your own picks (`use opus`, `/router force`) are never asked about.
-5. **Protects the prompt cache.** Each model has its own cache. On a long conversation (above `switchContextTokens`), a downgrade would re-read the whole context uncached, so the router keeps the current model and only lowers effort. Upgrades still go through.
+5. **Chooses the model at the start of a chat.** Each model has its own cache, so a switch re-reads the whole chat uncached: at 150k tokens a Sonnet detour costs about $0.56 up front to save a few cents per step. Above `switchContextTokens` (20k by default) the router keeps the current model and only lowers effort; upgrades still go through. When it does suggest a switch in a chat of 5k tokens or more, the question says what the re-read costs.
 6. **Learns how each reply landed.** After each turn, Haiku reads your next message against the end of the reply it answers and records *accepted*, *correction*, *doubt* or *none* (a new request or status question). Stopping a turn and answering a suggested switch are recorded too. `/router quality` shows, per model, the correction rate with a 95% range, and whether turns the router moved to another model drew more corrections than turns on your own model. Checked on 50 real replies: Haiku matched a careful human reading on 40; keyword rules found none of the 10 corrections or doubts. Turn it off with `judgeReactions` (then only keyword rules are used). Signals stay in the plugin's local store; the judge call sends the end of the reply and your message to Haiku.
 5. **Suggests delegation** with a short note only the model reads, and only when it helps:
    - broad codebase search → `model-router:scout` (Haiku, read-only, returns a summary)
@@ -58,7 +58,7 @@ For each message you type, the router:
 | Option | Default | What it does |
 |---|---|---|
 | `maxTier` | `opus` | The highest model the router picks on its own |
-| `switchContextTokens` | `40000` | Context size above which downgrades are held |
+| `switchContextTokens` | `20000` | Context size above which downgrades are held |
 | `useClassifier` | `true` | Haiku fallback when the heuristics are unsure |
 | `judgeReactions` | `true` | Haiku judges how each reply landed (one small call per turn) |
 | `respectManualSwitch` | `true` | Pause when you change the model yourself |

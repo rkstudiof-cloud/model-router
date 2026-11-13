@@ -159,6 +159,30 @@ test('the router asks before switching and stays put when told to', async ($, on
   expect(steps[0]?.effort).toBe('high')
 })
 
+test('the question shows what a switch costs in a longer chat', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 12_000, answer: 'stay' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('rename getUser to fetchUser'))
+
+  expect(w.asked?.[0]).toMatch(/re-reads this 12k-token chat without the cache \(about \$0\.01\)/)
+})
+
+test('a downgrade past 20k tokens is held without asking', async ($, on) => {
+  const steps: TurnStepInput[] = []
+  const w: World = { model: 'claude-opus-5-5', contextTokens: 25_000, answer: 'switch' }
+  world(on, w, steps, [])
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.prompt.submit(submit('rename getUser to fetchUser'))
+  await step($, 't1', 0, 'claude-opus-5-5')
+
+  expect(w.asked ?? []).toEqual([])
+  expect(steps[0]?.model).toBe('claude-opus-5-5')
+})
+
 test('a dismissed question keeps the current model', async ($, on) => {
   const steps: TurnStepInput[] = []
   world(on, { model: 'claude-opus-5-5', contextTokens: 2000, answer: 'dismiss' }, steps, [])

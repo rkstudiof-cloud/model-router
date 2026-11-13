@@ -1,6 +1,6 @@
 {
   "name": "model-router",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Picks the model, effort and delegation for each message to keep costs down without losing quality",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -13,8 +13,8 @@
     "switchContextTokens": {
       "type": "number",
       "title": "Context size that blocks switching to a cheaper model",
-      "description": "Above this many context tokens, the router keeps the current model instead of downgrading, because the new model would re-read the whole context without the prompt cache.",
-      "default": 40000
+      "description": "Above this many context tokens, the router keeps the current model instead of downgrading: the new model would re-read the whole chat without the cache, which costs more than a few cheaper steps save. Pick the model at the start of a chat instead.",
+      "default": 20000
     },
     "useClassifier": {
       "type": "boolean",

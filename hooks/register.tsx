@@ -32,6 +32,7 @@ import {
   reactionPrompt,
   ruleReaction,
   money,
+  switchCost,
   tierOf,
 } from './route'
 
@@ -83,7 +84,7 @@ function config(options: Readonly<Record<string, unknown>>): Config {
   const maxTier = s('maxTier')
   return {
     maxTier: maxTier && isTier(maxTier) ? maxTier : 'opus',
-    switchContextTokens: n('switchContextTokens', 40000),
+    switchContextTokens: n('switchContextTokens', 20000),
     useClassifier: b('useClassifier', true),
     respectManualSwitch: b('respectManualSwitch', true),
     showBand: b('showBand', true),
@@ -330,7 +331,10 @@ export const register: Register = (on, options) => {
       const no = `Stay on ${current}`
       let answer: string | undefined
       try {
-        answer = await $.ui.ask(`Model router suggests ${LABEL[d.tier]} at ${d.effort} effort for this message (${d.reason}). Switch?`, {
+        const ctx = usage.context.tokens ?? 0
+        const cost =
+          ctx >= 5000 ? ` Switching re-reads this ${Math.round(ctx / 1000)}k-token chat without the cache (about ${money(switchCost(d.tier, ctx))}).` : ''
+        answer = await $.ui.ask(`Model router suggests ${LABEL[d.tier]} at ${d.effort} effort for this message (${d.reason}).${cost} Switch?`, {
           header: 'Model',
           options: [yes, no],
         })

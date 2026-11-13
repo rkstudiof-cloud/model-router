@@ -170,6 +170,23 @@ const HARD: Rule[] = [
   { re: /\broot cause\b|\bwhy (?:does|is|isn'?t|doesn'?t|would|did|do)\b/i, w: 2, why: 'root-cause analysis' },
   { re: /\b(?:optimi[sz]e|performance|latency|bottleneck|scalab)/i, w: 2, why: 'performance work' },
   { re: /\btrade-?offs?\b|\bcompare (?:approaches|options|designs)\b|\bpros and cons\b/i, w: 2, why: 'design trade-offs' },
+  // From this user's history: design, UX and writing drew the most "not up to the mark"
+  // corrections even on Opus, and Sonnet trailed most on summarise-or-decide questions.
+  {
+    re: /(?<![\w./-])(?:ui|ux)(?![\w./-])|\buser experience\b|\bredesign\b|\blayout\b|\buser flow\b|\blook and feel\b|\bvisual(?:ly)?\b|\blanding page\b|\bonboarding\b|\bcopywriting\b|\bwording\b|\btone of voice\b|\bbrand(?:ing)?\b|\bdesign (?:the|a|an|this|our) (?:page|screen|flow|form|dialog|modal|dashboard|card|section)\b/i,
+    w: 3,
+    why: 'design, UX or writing',
+  },
+  {
+    re: /\b(?:write|draft|rewrite|reword|polish)\b.*\b(?:copy|description|email|message|post|announcement|proposal|article|blog|release notes?|docs?|readme)\b/i,
+    w: 3,
+    why: 'design, UX or writing',
+  },
+  {
+    re: /\bwhat (?:should|do|can) (?:we|i) do\b|\bwhat(?:'s| is) (?:next|the plan)\b|\bnext steps?\b|\bwhat (?:have|did) we (?:do|done|change)|\bwhere (?:are we|do we stand)\b|\bsummar(?:y|i[sz]e)\b|\b(?:are|is) (?:you|we|it|this|everything) (?:confident|sure|ready|healthy)\b|\bshould (?:we|i)\b|\brecommend|\bwhich (?:option|approach|one) (?:is|should|would)\b/i,
+    w: 3,
+    why: 'summarise or decide',
+  },
 ]
 
 const STANDARD: Rule[] = [
@@ -182,9 +199,14 @@ const STANDARD: Rule[] = [
 
 const TRIVIAL: Rule[] = [
   { re: /\b(?:rename|typo|spelling|reformat|format|lint|indent|bump (?:the )?version|add (?:a )?comment|remove (?:unused|dead) (?:imports?|code))\b/i, w: 2, why: 'mechanical edit' },
-  { re: /^(?:what|where|which|who|when|how many|is there|does|list|show)\b/i, w: 1, why: 'quick question' },
-  { re: /\b(?:summari[sz]e|translate|tl;?dr|one-liner|regex for)\b/i, w: 1, why: 'small text task' },
   { re: /\b(?:git (?:status|log|diff)|run (?:the )?tests?|commit (?:this|it|these))\b/i, w: 2, why: 'routine command' },
+]
+
+// Questions go to Sonnet, not Haiku: in a blind head-to-head on 40 of this user's past questions,
+// Haiku matched Opus on only about a quarter, Sonnet on half to three-quarters.
+const QUESTION: Rule[] = [
+  { re: /^(?:what|where|which|who|when|how|is|are|does|do|did|can|could|list|show|explain|tell me)\b|\?\s*$/i, w: 1, why: 'question' },
+  { re: /\b(?:translate|tl;?dr|one-liner|regex for)\b/i, w: 1, why: 'small text task' },
 ]
 
 const SEARCH =
@@ -228,6 +250,7 @@ export function heuristic(text: string): Guess {
   const hard = score(HARD, text)
   const std = score(STANDARD, text)
   const triv = score(TRIVIAL, text)
+  const ask = score(QUESTION, text)
   const files = fileCount(text)
   const items = listItems(text)
   const long = text.length > 1500
@@ -256,6 +279,10 @@ export function heuristic(text: string): Guess {
     tier = 'haiku'
     effort = 'low'
     why = triv.why
+  } else if (ask.w >= 1) {
+    tier = 'sonnet'
+    effort = 'low'
+    why = ask.why
   } else {
     tier = 'sonnet'
     effort = 'medium'
@@ -283,7 +310,9 @@ export function heuristic(text: string): Guess {
 // ---------------------------------------------------------------- classifier
 
 export const CLASSIFIER_LABELS = [
-  'trivial-edit-or-quick-question',
+  'mechanical-edit-or-routine-command',
+  'quick-question-or-status-check',
+  'design-ux-writing-summary-or-decision',
   'normal-coding-task',
   'hard-reasoning-debugging-or-architecture',
   'broad-codebase-search',
@@ -292,8 +321,12 @@ export const CLASSIFIER_LABELS = [
 
 export function fromClassifier(label: string | undefined, fallback: Guess): Guess {
   switch (label) {
-    case 'trivial-edit-or-quick-question':
-      return { tier: 'haiku', effort: 'low', delegate: 'inline', reason: 'classifier: trivial', confident: true }
+    case 'mechanical-edit-or-routine-command':
+      return { tier: 'haiku', effort: 'low', delegate: 'inline', reason: 'classifier: mechanical edit', confident: true }
+    case 'quick-question-or-status-check':
+      return { tier: 'sonnet', effort: 'low', delegate: 'inline', reason: 'classifier: question', confident: true }
+    case 'design-ux-writing-summary-or-decision':
+      return { tier: 'opus', effort: 'high', delegate: 'inline', reason: 'classifier: design, writing or decision', confident: true }
     case 'normal-coding-task':
       return { tier: 'sonnet', effort: 'medium', delegate: 'inline', reason: 'classifier: standard task', confident: true }
     case 'hard-reasoning-debugging-or-architecture':
@@ -494,6 +527,14 @@ export function addStats(a: RouterStats, b: Partial<RouterStats>): RouterStats {
     overrides: a.overrides + (b.overrides ?? 0),
   }
 }
+
+/**
+ * What switching to `tier` costs up front on a chat of `contextTokens`: the new model has no
+ * cache for this chat, so its first request writes the whole context to cache (1.25x input).
+ * Staying put re-reads it from cache at 0.1x. Choosing the model at the start of a chat is cheap;
+ * switching in a long one costs more than a few cheaper steps save.
+ */
+export const switchCost = (tier: ModelTier, contextTokens: number): number => (contextTokens * PRICE[tier][0] * 1.25) / 1_000_000
 
 export const money = (n: number): string => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`)
 

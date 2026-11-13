@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { Decision } from '../types'
-import { decide, detectOverride, formatQuality, guardSwitch, heuristic, isFollowUp, parseReaction, reactionPrompt, ruleReaction, wilson } from '../hooks/route'
+import { decide, detectOverride, formatQuality, fromClassifier, guardSwitch, heuristic, isFollowUp, parseReaction, reactionPrompt, ruleReaction, switchCost, wilson } from '../hooks/route'
 
 const base = { last: null, forced: null, failStreak: 0, maxTier: 'opus' as const, escalateAfter: 2 }
 
@@ -9,7 +9,10 @@ const base = { last: null, forced: null, failStreak: 0, maxTier: 'opus' as const
 const CASES: ReadonlyArray<readonly [string, 'haiku' | 'sonnet' | 'opus', string]> = [
   ['rename getUser to fetchUser in api.ts', 'haiku', 'inline'],
   ['fix the typo in the README', 'haiku', 'inline'],
-  ['what does this function return?', 'haiku', 'inline'],
+  ['what does this function return?', 'sonnet', 'inline'],
+  ['is the build passing?', 'sonnet', 'inline'],
+  ['translate this error message into plain English', 'sonnet', 'inline'],
+  ['rename Button in src/components/ui/button.tsx', 'haiku', 'inline'],
   ['run the tests', 'haiku', 'inline'],
   ['remove unused imports from utils.ts', 'haiku', 'inline'],
   ['add a login form component with email and password validation', 'sonnet', 'inline'],
@@ -26,6 +29,13 @@ const CASES: ReadonlyArray<readonly [string, 'haiku' | 'sonnet' | 'opus', string
   ['migrate the app from webpack to vite', 'opus', 'plan-first'],
   ['please do these:\n1. add a dark mode toggle component\n2. add a settings page\n3. write tests for the settings page', 'sonnet', 'parallel'],
   ['add an export button to the report page, and separately in the background look into the CI cache', 'sonnet', 'split-session'],
+  // Kept on Opus: design, UX and writing, and summarise-or-decide questions.
+  ['the checkout UI feels clunky, improve the flow', 'opus', 'inline'],
+  ['redesign the settings page layout', 'opus', 'inline'],
+  ['write a launch announcement email for the new feature', 'opus', 'inline'],
+  ['okay, so what should we do now?', 'opus', 'inline'],
+  ['summarise what we have done so far', 'opus', 'inline'],
+  ['are you confident this is ready for production?', 'opus', 'inline'],
 ]
 
 describe('routing table', () => {
@@ -150,5 +160,19 @@ describe('quality signals', () => {
   })
   test('an empty history says so', () => {
     expect(formatQuality([])).toMatch(/no quality signals yet/)
+  })
+})
+
+describe('evidence-based routing', () => {
+  test('the classifier never sends a question to Haiku', () => {
+    const g = heuristic('hmm')
+    expect(fromClassifier('quick-question-or-status-check', g).tier).toBe('sonnet')
+    expect(fromClassifier('mechanical-edit-or-routine-command', g).tier).toBe('haiku')
+    expect(fromClassifier('design-ux-writing-summary-or-decision', g).tier).toBe('opus')
+  })
+  test('a switch in a long chat costs a full uncached re-read', () => {
+    // 150k tokens to Sonnet at $3/M input, written to cache at 1.25x.
+    expect(Math.round(switchCost('sonnet', 150_000) * 10000)).toBe(5625)
+    expect(Math.round(switchCost('haiku', 10_000) * 10000)).toBe(125)
   })
 })
