@@ -12,11 +12,17 @@ At the prompt of a Claude Code terminal session:
 
 Answer `y` to add the marketplace, then pick a scope (user scope loads it in every session).
 
-From a shell:
+From a shell (the `claude plugin install` command has no `--marketplace` option, so add the marketplace first):
 
 ```bash
-claude plugin install model-router --marketplace rkstudiof-cloud/model-router
+claude plugin marketplace add rkstudiof-cloud/model-router
 ```
+
+```bash
+claude plugin install model-router@model-router
+```
+
+Then restart Claude Code. Settings can be passed at install with `--config KEY=VALUE`.
 
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `rkstudiof-cloud/model-router`, then Add plugin.
 
