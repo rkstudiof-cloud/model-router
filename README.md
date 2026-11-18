@@ -1,3 +1,12 @@
+<p align="center"><img src="docs/banner.png" alt="model-router" width="100%"></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.5.0-6366F1?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square" alt="MIT License">
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square" alt="Claude Code plugin">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+</p>
+
 # model-router
 
 A Claude Code mod that picks the **model**, **effort level** and **delegation strategy** for each message you send, to keep credit use down without losing quality.
